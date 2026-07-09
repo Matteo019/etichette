@@ -1,0 +1,28 @@
+# Ambienti virtuali
+env/
+codice/env/
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+
+# File di dati e output (per evitare di tracciare dati sensibili o grandi file)
+*.xlsx
+*.pdf
+
+# Cartelle temporanee dello script
+codice/output_etichette/
+codice/temp_barcodes/
+codice/output_prova/
+codice/Immagini_scartate/
+
+# Personali
+codice/Immagini_articoli_Sigla/
+4_ELENCO ETICHETTE AZIENDALE.xlsx

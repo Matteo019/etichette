@@ -1,0 +1,5 @@
+pandas
+openpyxl
+Pillow
+python-barcode
+img2pdf
