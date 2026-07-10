@@ -1,5 +1,5 @@
 """
-app.py — Interfaccia grafica Tkinter per il generatore di etichette.
+app.py — Interfaccia grafica Tkinter (Stile Classico) per il generatore di etichette.
 Eseguire con:  python app.py
 """
 
@@ -13,279 +13,218 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False):
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.insert(0, SCRIPT_DIR)
 from genera_etichette import run, genera_label_anteprima, genera_pagina_preview
 
 import pandas as pd
 
-# ─── Palette colori ───────────────────────────────────────────────────────────
-BG       = "#1e1e2e"
-BG2      = "#2a2a3e"
-BG3      = "#313244"
-ACCENT   = "#7c6af7"
-ACCENT_H = "#9b8df9"
-FG       = "#cdd6f4"
-FG_DIM   = "#6c7086"
-SUCCESS  = "#a6e3a1"
-WARNING  = "#f9e2af"
-ERROR    = "#f38ba8"
-BORDER   = "#45475a"
+class StdoutRedirector:
+    def __init__(self, text_widget_queue, tag=None):
+        self.queue = text_widget_queue
+        self.tag = tag
+    def write(self, string):
+        if string.strip():
+            self.queue.put((string.strip(), self.tag))
+    def flush(self):
+        pass
 
-FONT_MAIN = ("Segoe UI", 10)
-FONT_BOLD = ("Segoe UI", 10, "bold")
-FONT_MONO = ("Consolas", 9)
-FONT_HEAD = ("Segoe UI", 15, "bold")
-FONT_SUB  = ("Segoe UI", 8)
-
-# Rate-limiting: aggiorna UI al massimo ogni N ms durante la generazione
+# Rate-limiting per la UI
 PROGRESS_INTERVAL_MS = 150
 LOG_FLUSH_INTERVAL_MS = 200
-
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Generatore Etichette Aziendali")
-        self.configure(bg=BG)
-        self.resizable(True, True)
+        self.geometry("1100x720")
         self.minsize(980, 640)
+
+        # Tema nativo Windows se disponibile
+        self.style = ttk.Style(self)
+        try:
+            if 'vista' in self.style.theme_names():
+                self.style.theme_use('vista')
+            elif 'xpnative' in self.style.theme_names():
+                self.style.theme_use('xpnative')
+        except:
+            pass
 
         self._pdf_path        = None
         self._preview_tk      = None
-        self._last_progress_t = 0.0   # throttle progresso
-        self._log_queue       = queue.Queue()  # buffer log
-        self._log_flush_id    = None  # ID del after() per flush log
+        self._preview_pil     = None
+        self._scale           = 1.0
+        self._offset_x        = 0
+        self._offset_y        = 0
+        self._pan_start_x     = 0
+        self._pan_start_y     = 0
+        
+        self._last_progress_t = 0.0
+        self._log_queue       = queue.Queue()
+        self._log_flush_id    = None
+
+        sys.stdout = StdoutRedirector(self._log_queue)
+        sys.stderr = StdoutRedirector(self._log_queue, tag="err")
 
         self._build_ui()
         self._try_auto_detect()
-        self._start_log_flusher()  # avvia il flusher periodico del log
+        self._start_log_flusher()
 
         self.update_idletasks()
-        w, h = 1100, 720
-        x = (self.winfo_screenwidth()  - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
-        self.geometry(f"{w}x{h}+{x}+{y}")
+        x = (self.winfo_screenwidth()  - self.winfo_width()) // 2
+        y = (self.winfo_screenheight() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # BUILD UI
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        # Header
-        header = tk.Frame(self, bg=ACCENT, pady=12)
+        # Header in alto
+        header = tk.Frame(self, bg="#ffffff", pady=10, padx=15, highlightthickness=1, highlightbackground="#d0d0d0")
         header.pack(fill="x")
-        tk.Label(header, text="🏷  Generatore Etichette Aziendali",
-                 font=FONT_HEAD, bg=ACCENT, fg="white").pack()
-        tk.Label(header, text="Griglia 19 × 4  ·  EAN-13  ·  PDF pronto per la fresa",
-                 font=("Segoe UI", 9), bg=ACCENT, fg="#ddd8ff").pack()
+        tk.Label(header, text="Generatore Etichette Aziendali", font=("Segoe UI", 16, "bold"), bg="#ffffff", fg="#003366", anchor="w").pack(fill="x")
+        tk.Label(header, text="Griglia 19 × 4  ·  EAN-13  ·  PDF pronto per la fresa", font=("Segoe UI", 9), bg="#ffffff", fg="#555555", anchor="w").pack(fill="x")
 
-        body = tk.Frame(self, bg=BG)
+        # Container principale diviso in 2 colonne (sinistra per controlli, destra per anteprima)
+        body = tk.Frame(self, padx=10, pady=10)
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=3)
         body.columnconfigure(1, weight=2)
         body.rowconfigure(0, weight=1)
 
-        left  = tk.Frame(body, bg=BG, padx=20, pady=16)
-        left.grid(row=0, column=0, sticky="nsew")
+        left = tk.Frame(body)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
-        right = tk.Frame(body, bg=BG2, padx=16, pady=16,
-                         highlightthickness=1, highlightbackground=BORDER)
+        right = tk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew")
 
         self._build_left(left)
         self._build_right(right)
 
     def _build_left(self, parent):
-        # ── File Excel ──────────────────────────────────────────────────────
-        self._sec(parent, "📂  File Excel *")
-        r = tk.Frame(parent, bg=BG); r.pack(fill="x", pady=(4,0))
+        # ── Parametri Progetto ───────────────────────────────────────────────
+        lf_params = ttk.LabelFrame(parent, text=" 📂 Parametri Progetto ")
+        lf_params.pack(fill="x", pady=(0, 10), ipady=5)
+
+        tk.Label(lf_params, text="File Excel *:").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 5))
         self.var_excel = tk.StringVar()
         self.var_excel.trace_add("write", self._on_params_change)
-        self._entry(r, self.var_excel).pack(side="left", fill="x", expand=True, ipady=6, padx=(0,8))
-        self._btn(r, "Sfoglia…", self._browse_excel, width=9).pack(side="left")
+        ttk.Entry(lf_params, textvariable=self.var_excel).grid(row=0, column=1, sticky="ew", padx=5, pady=(10, 5))
+        ttk.Button(lf_params, text="Sfoglia...", command=self._browse_excel, width=12).grid(row=0, column=2, padx=10, pady=(10, 5))
 
-        # ── Cartella immagini ────────────────────────────────────────────────
-        self._sec(parent, "🖼  Cartella immagini *")
-        r2 = tk.Frame(parent, bg=BG); r2.pack(fill="x", pady=(4,0))
+        tk.Label(lf_params, text="Cartella Immagini *:").grid(row=1, column=0, sticky="w", padx=10, pady=(0, 5))
         self.var_imgdir = tk.StringVar()
         self.var_imgdir.trace_add("write", self._on_params_change)
-        self._entry(r2, self.var_imgdir).pack(side="left", fill="x", expand=True, ipady=6, padx=(0,8))
-        self._btn(r2, "Sfoglia…", self._browse_imgdir, width=9).pack(side="left")
+        ttk.Entry(lf_params, textvariable=self.var_imgdir).grid(row=1, column=1, sticky="ew", padx=5, pady=(0, 5))
+        ttk.Button(lf_params, text="Sfoglia...", command=self._browse_imgdir, width=12).grid(row=1, column=2, padx=10, pady=(0, 5))
+
+        tk.Label(lf_params, text="Salvataggio PDF (opzionale):").grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
+        self.var_pdf_out = tk.StringVar()
+        ttk.Entry(lf_params, textvariable=self.var_pdf_out).grid(row=2, column=1, sticky="ew", padx=5, pady=(0, 10))
+        ttk.Button(lf_params, text="Sfoglia...", command=self._browse_pdf, width=12).grid(row=2, column=2, padx=10, pady=(0, 10))
+        
+        lf_params.columnconfigure(1, weight=1)
 
         # ── Gestione anomalie ────────────────────────────────────────────────
-        self._sec(parent, "⚠️  Gestione anomalie")
-        anom = tk.Frame(parent, bg=BG3, padx=12, pady=10,
-                        highlightthickness=1, highlightbackground=BORDER)
-        anom.pack(fill="x", pady=(4,0))
+        lf_anom = ttk.LabelFrame(parent, text=" ⚠️ Gestione Anomalie ")
+        lf_anom.pack(fill="x", pady=10, ipady=5)
 
-        tk.Label(anom, text="Barcode mancante / invalido:",
-                 font=FONT_BOLD, bg=BG3, fg=FG).pack(anchor="w")
+        f_bc = tk.Frame(lf_anom)
+        f_bc.pack(fill="x", padx=10, pady=5)
+        tk.Label(f_bc, text="Barcode mancante/invalido:").pack(side="left", padx=(0, 10))
         self.var_anom_bc = tk.StringVar(value="blank")
-        self._radio_row(anom, self.var_anom_bc, [
-            ("blank", "Genera etichetta con zona barcode bianca"),
-            ("skip",  "Salta l'etichetta"),
-        ])
+        ttk.Radiobutton(f_bc, text="Lascia bianco", variable=self.var_anom_bc, value="blank").pack(side="left", padx=5)
+        ttk.Radiobutton(f_bc, text="Salta l'etichetta", variable=self.var_anom_bc, value="skip").pack(side="left", padx=5)
 
-        tk.Frame(anom, bg=BORDER, height=1).pack(fill="x", pady=8)
-
-        tk.Label(anom, text="Immagine non trovata:",
-                 font=FONT_BOLD, bg=BG3, fg=FG).pack(anchor="w")
+        f_img = tk.Frame(lf_anom)
+        f_img.pack(fill="x", padx=10, pady=5)
+        tk.Label(f_img, text="Immagine non trovata:").pack(side="left", padx=(0, 26))
         self.var_anom_img = tk.StringVar(value="blank")
-        self._radio_row(anom, self.var_anom_img, [
-            ("blank", "Genera etichetta con metà sinistra bianca"),
-            ("skip",  "Salta l'etichetta"),
-        ])
+        ttk.Radiobutton(f_img, text="Lascia bianco", variable=self.var_anom_img, value="blank").pack(side="left", padx=5)
+        ttk.Radiobutton(f_img, text="Salta l'etichetta", variable=self.var_anom_img, value="skip").pack(side="left", padx=5)
 
-        # ── Impostazioni avanzate (collassabile) ─────────────────────────────
-        self._build_advanced(parent)
+        # ── Impostazioni avanzate ─────────────────────────────────────────────
+        lf_adv = ttk.LabelFrame(parent, text=" ⚙ Impostazioni Avanzate ")
+        lf_adv.pack(fill="x", pady=10, ipady=5)
+        
+        tk.Label(lf_adv, text="Nome foglio Excel:").pack(side="left", padx=10, pady=5)
+        self.var_sheet = tk.StringVar(value="Situazione Magazzino")
+        ttk.Entry(lf_adv, textvariable=self.var_sheet, width=25).pack(side="left", padx=5, pady=5)
+        tk.Label(lf_adv, text="(Default: Situazione Magazzino)", fg="#666").pack(side="left", padx=5)
 
-        # ── Bottoni ──────────────────────────────────────────────────────────
-        btn_row = tk.Frame(parent, bg=BG); btn_row.pack(fill="x", pady=14)
-
-        self.btn_anteprima = self._btn(btn_row, "🔍  Avvia anteprima",
-                                       self._avvia_anteprima, width=18, secondary=True)
+        # ── Azioni (Bottoni principali) ──────────────────────────────────────
+        f_actions = tk.Frame(parent)
+        f_actions.pack(fill="x", pady=15)
+        
+        self.btn_anteprima = tk.Button(f_actions, text="🔍 Avvia Anteprima", command=self._avvia_anteprima, font=("Segoe UI", 10), bg="#e1e1e1", padx=10, pady=5, relief="groove")
         self.btn_anteprima.pack(side="left")
         self.btn_anteprima.config(state="disabled")
 
-        self.btn_avvia = self._btn(btn_row, "▶  Avvia generazione",
-                                   self._avvia, big=True, width=20)
-        self.btn_avvia.pack(side="left", padx=(10,0))
+        self.btn_avvia = tk.Button(f_actions, text="▶ Avvia Generazione", command=self._avvia, font=("Segoe UI", 10, "bold"), bg="#0066cc", fg="white", padx=10, pady=5, relief="groove")
+        self.btn_avvia.pack(side="left", padx=(10, 0))
         self.btn_avvia.config(state="disabled")
 
-        self.btn_apri = self._btn(btn_row, "📄  Apri PDF", self._apri_pdf,
-                                  width=12, secondary=True)
-        self.btn_apri.pack(side="left", padx=(10,0))
+        self.btn_apri = tk.Button(f_actions, text="📄 Apri PDF", command=self._apri_pdf, font=("Segoe UI", 10), bg="#e1e1e1", padx=10, pady=5, relief="groove")
+        self.btn_apri.pack(side="left", padx=(10, 0))
         self.btn_apri.config(state="disabled")
 
         # ── Progresso ────────────────────────────────────────────────────────
-        self._sec(parent, "⏳  Progresso")
-        style = ttk.Style(self)
-        style.theme_use("default")
-        style.configure("C.Horizontal.TProgressbar",
-                        troughcolor=BG2, background=ACCENT,
-                        borderwidth=0, thickness=8)
+        lf_prog = ttk.LabelFrame(parent, text=" ⏳ Stato ")
+        lf_prog.pack(fill="x", pady=(5, 10), ipady=5)
+        
+        self.lbl_status = tk.Label(lf_prog, text="Seleziona i parametri obbligatori (*) per abilitare l'avvio.", fg="#666")
+        self.lbl_status.pack(anchor="w", padx=10, pady=(5, 5))
+        
         self.progress_var = tk.IntVar(value=0)
-        ttk.Progressbar(parent, variable=self.progress_var,
-                        maximum=100, style="C.Horizontal.TProgressbar"
-                        ).pack(fill="x", pady=(4,0))
-        self.lbl_status = tk.Label(
-            parent,
-            text="Seleziona i parametri obbligatori (*) per abilitare l'avvio.",
-            font=FONT_MAIN, bg=BG, fg=FG_DIM, anchor="w", wraplength=500)
-        self.lbl_status.pack(fill="x", pady=(4,8))
+        ttk.Progressbar(lf_prog, variable=self.progress_var, maximum=100).pack(fill="x", padx=10, pady=(0, 5))
 
         # ── Log ──────────────────────────────────────────────────────────────
-        self._sec(parent, "📝  Log")
-        log_wrap = tk.Frame(parent, bg=BG2, highlightthickness=1, highlightbackground=BORDER)
-        log_wrap.pack(fill="both", expand=True, pady=(4,0))
-        self.txt_log = tk.Text(log_wrap, font=FONT_MONO, bg=BG2, fg=FG,
-                               insertbackground=FG, relief="flat",
-                               state="disabled", wrap="word", padx=8, pady=6)
-        self.txt_log.pack(side="left", fill="both", expand=True)
-        sb = tk.Scrollbar(log_wrap, command=self.txt_log.yview,
-                          bg=BG2, troughcolor=BG2, highlightthickness=0, relief="flat")
-        sb.pack(side="right", fill="y")
+        lf_log = ttk.LabelFrame(parent, text=" 📝 Log Eventi ")
+        lf_log.pack(fill="both", expand=True)
+
+        self.txt_log = tk.Text(lf_log, font=("Consolas", 9), state="disabled", wrap="word", bg="white", height=8)
+        self.txt_log.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        sb = ttk.Scrollbar(lf_log, command=self.txt_log.yview)
+        sb.pack(side="right", fill="y", pady=5, padx=(0, 5))
         self.txt_log.config(yscrollcommand=sb.set)
-        self.txt_log.tag_config("warn", foreground=WARNING)
-        self.txt_log.tag_config("ok",   foreground=SUCCESS)
-        self.txt_log.tag_config("err",  foreground=ERROR)
-
-    def _build_advanced(self, parent):
-        """Sezione 'Impostazioni avanzate' collassabile."""
-        self._adv_visible = tk.BooleanVar(value=False)
-
-        toggle_btn = tk.Button(
-            parent, text="⚙  Impostazioni avanzate ▾",
-            command=self._toggle_advanced,
-            bg=BG, fg=FG_DIM, activebackground=BG2,
-            activeforeground=FG, relief="flat",
-            font=("Segoe UI", 9), cursor="hand2", anchor="w", padx=0
-        )
-        toggle_btn.pack(fill="x", pady=(10, 0))
-
-        self._adv_frame = tk.Frame(parent, bg=BG3, padx=12, pady=10,
-                                   highlightthickness=1, highlightbackground=BORDER)
-        # Non packed di default → collassato
-
-        tk.Label(self._adv_frame, text="Nome foglio Excel:",
-                 font=FONT_BOLD, bg=BG3, fg=FG).pack(anchor="w")
-        self.var_sheet = tk.StringVar(value="Situazione Magazzino")
-        self._entry(self._adv_frame, self.var_sheet).pack(fill="x", ipady=5, pady=(4,0))
-        tk.Label(self._adv_frame,
-                 text="Lascia il valore predefinito se non conosci il nome esatto del foglio.",
-                 font=FONT_SUB, bg=BG3, fg=FG_DIM).pack(anchor="w", pady=(2,0))
-
-    def _toggle_advanced(self):
-        if self._adv_frame.winfo_ismapped():
-            self._adv_frame.pack_forget()
-        else:
-            self._adv_frame.pack(fill="x", pady=(4, 0))
+        
+        self.txt_log.tag_config("warn", foreground="#d97706") # arancione
+        self.txt_log.tag_config("ok",   foreground="#16a34a") # verde
+        self.txt_log.tag_config("err",  foreground="#dc2626") # rosso
 
     def _build_right(self, parent):
-        self.lbl_preview_title = tk.Label(
-            parent, text="🔍  Anteprima",
-            font=FONT_BOLD, bg=BG2, fg=ACCENT_H)
-        self.lbl_preview_title.pack(anchor="w")
-        tk.Label(parent,
-                 text="Clicca 'Avvia anteprima' per vedere la pagina 4×19",
-                 font=FONT_SUB, bg=BG2, fg=FG_DIM).pack(anchor="w", pady=(0,10))
+        lf_preview = ttk.LabelFrame(parent, text=" 🔍 Visualizzatore Anteprima ")
+        lf_preview.pack(fill="both", expand=True)
 
-        self.canvas_preview = tk.Canvas(parent, bg=BG3, highlightthickness=1,
-                                        highlightbackground=BORDER)
-        self.canvas_preview.pack(fill="both", expand=True)
-        self.lbl_preview_info = tk.Label(
-            parent,
-            text="Premi '🔍 Avvia anteprima' per visualizzare il layout di stampa.",
-            font=FONT_MAIN, bg=BG2, fg=FG_DIM,
-            anchor="center", wraplength=300)
-        self.lbl_preview_info.pack(pady=8)
+        tk.Label(lf_preview, text="Anteprima visiva della pagina 4x19", fg="#666").pack(pady=(10, 5))
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # HELPERS UI
-    # ─────────────────────────────────────────────────────────────────────────
+        self.canvas_preview = tk.Canvas(lf_preview, bg="black", highlightthickness=1, highlightbackground="#cccccc")
+        self.canvas_preview.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        self.canvas_preview.bind("<MouseWheel>", self._on_zoom)
+        self.canvas_preview.bind("<ButtonPress-1>", self._on_pan_start)
+        self.canvas_preview.bind("<B1-Motion>", self._on_pan_move)
+        
+        # Gestione zoom mouse per Linux
+        self.canvas_preview.bind("<Button-4>", self._on_zoom)
+        self.canvas_preview.bind("<Button-5>", self._on_zoom)
 
-    def _sec(self, parent, text):
-        tk.Label(parent, text=text, font=FONT_BOLD,
-                 bg=BG, fg=ACCENT_H, anchor="w").pack(fill="x", pady=(14,0))
+        self.lbl_preview_info = tk.Label(lf_preview, text="Usa la rotellina per zoomare e trascina per spostarti.", fg="#666")
+        self.lbl_preview_info.pack(pady=(0, 10))
 
-    def _entry(self, parent, var):
-        return tk.Entry(parent, textvariable=var, font=FONT_MAIN,
-                        bg=BG2, fg=FG, insertbackground=FG, relief="flat",
-                        highlightthickness=1, highlightbackground=BORDER,
-                        highlightcolor=ACCENT)
-
-    def _btn(self, parent, text, cmd, width=None, big=False, secondary=False):
-        bg_c = BG3 if secondary else ACCENT
-        fg_c = FG  if secondary else "white"
-        fnt  = ("Segoe UI", 11, "bold") if big else FONT_BOLD
-        b = tk.Button(parent, text=text, command=cmd,
-                      bg=bg_c, fg=fg_c, activebackground=ACCENT_H,
-                      activeforeground="white", relief="flat",
-                      font=fnt, cursor="hand2", padx=14, pady=7)
-        if width:
-            b.config(width=width)
-        b.bind("<Enter>", lambda e: b.config(bg=ACCENT_H if not secondary else ACCENT))
-        b.bind("<Leave>", lambda e: b.config(bg=bg_c))
-        return b
-
-    def _radio_row(self, parent, var, options):
-        for value, label in options:
-            tk.Radiobutton(parent, text=label, variable=var, value=value,
-                           font=FONT_MAIN, bg=BG3, fg=FG,
-                           selectcolor=ACCENT, activebackground=BG3,
-                           activeforeground=FG, cursor="hand2"
-                           ).pack(anchor="w", padx=8, pady=1)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # LOG con buffer + flush periodico (evita flooding della event queue)
+    # LOG con buffer + flush periodico
     # ─────────────────────────────────────────────────────────────────────────
-
     def _start_log_flusher(self):
-        """Svuota il buffer del log ogni LOG_FLUSH_INTERVAL_MS ms."""
         self._flush_log_buffer()
 
     def _flush_log_buffer(self):
-        """Chiamata periodicamente dal main thread per scrivere i messaggi accodati."""
         messages = []
         try:
             while True:
@@ -300,63 +239,48 @@ class App(tk.Tk):
             self.txt_log.see("end")
             self.txt_log.config(state="disabled")
 
-        # Ri-schedula se stessa
         self._log_flush_id = self.after(LOG_FLUSH_INTERVAL_MS, self._flush_log_buffer)
 
     def _log(self, msg, tag=None):
-        """Thread-safe: accoda il messaggio, sarà scritto dal flusher."""
         if tag is None:
-            if any(k in msg for k in ("ATTENZIONE", "Errore", "ERRORE")):
-                tag = "warn"
-            elif "✔" in msg or "successo" in msg.lower():
-                tag = "ok"
+            if any(k in msg for k in ("ATTENZIONE", "Errore", "ERRORE")): tag = "warn"
+            elif "✔" in msg or "successo" in msg.lower(): tag = "ok"
         self._log_queue.put((msg, tag))
 
     # ─────────────────────────────────────────────────────────────────────────
     # STATUS & PROGRESS (throttled)
     # ─────────────────────────────────────────────────────────────────────────
-
-    def _set_status(self, msg, color=FG_DIM):
+    def _set_status(self, msg, color="#666666"):
         self.after(0, lambda: self.lbl_status.config(text=msg, fg=color))
 
     def _set_progress(self, current, total):
-        """Rate-limited: aggiorna la barra al massimo ogni PROGRESS_INTERVAL_MS."""
         now = time.monotonic()
         is_last = (current >= total)
         if not is_last and (now - self._last_progress_t) < PROGRESS_INTERVAL_MS / 1000:
-            return   # troppo presto, salto questo aggiornamento
+            return
         self._last_progress_t = now
         pct = int(current / total * 100) if total else 0
 
         def _update():
             self.progress_var.set(pct)
-            self.lbl_status.config(
-                text=f"Elaborazione: {current}/{total} righe ({pct}%)",
-                fg=FG)
+            self.lbl_status.config(text=f"Elaborazione: {current}/{total} righe ({pct}%)", fg="#000")
         self.after(0, _update)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # LOGICA
+    # LOGICA APP
     # ─────────────────────────────────────────────────────────────────────────
-
     def _try_auto_detect(self):
-        parent_dir = os.path.abspath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-        )
+        parent_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
         xlsx_files = glob.glob(os.path.join(parent_dir, "*.xlsx"))
         if xlsx_files:
             self.var_excel.set(xlsx_files[0])
 
-        default_img = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   "Immagini_articoli_Sigla")
+        default_img = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Immagini_articoli_Sigla")
         if os.path.isdir(default_img):
             self.var_imgdir.set(default_img)
 
     def _browse_excel(self):
-        path = filedialog.askopenfilename(
-            title="Seleziona il file Excel",
-            filetypes=[("File Excel", "*.xlsx *.xls"), ("Tutti i file", "*.*")]
-        )
+        path = filedialog.askopenfilename(title="Seleziona il file Excel", filetypes=[("File Excel", "*.xlsx *.xls"), ("Tutti i file", "*.*")])
         if path:
             self.var_excel.set(path)
 
@@ -364,6 +288,11 @@ class App(tk.Tk):
         path = filedialog.askdirectory(title="Seleziona la cartella delle immagini")
         if path:
             self.var_imgdir.set(path)
+
+    def _browse_pdf(self):
+        path = filedialog.asksaveasfilename(title="Salva PDF come", defaultextension=".pdf", filetypes=[("PDF files", "*.pdf"), ("Tutti i file", "*.*")])
+        if path:
+            self.var_pdf_out.set(path)
 
     def _on_params_change(self, *_):
         excel_ok = bool(self.var_excel.get().strip()) and os.path.isfile(self.var_excel.get().strip())
@@ -375,27 +304,26 @@ class App(tk.Tk):
         self.btn_anteprima.config(state=state)
 
         if ready:
-            self._set_status("Parametri pronti. Premi 🔍 Anteprima o ▶ Avvia.", FG)
+            self._set_status("Parametri pronti. Premi 🔍 Anteprima o ▶ Avvia.", "#000")
         else:
             missing = []
             if not excel_ok:  missing.append("file Excel")
             if not img_ok:    missing.append("cartella immagini")
-            self._set_status(f"Seleziona: {', '.join(missing)} per abilitare l'avvio.", FG_DIM)
+            self._set_status(f"Seleziona: {', '.join(missing)} per abilitare l'avvio.", "#666")
 
     def _avvia_anteprima(self):
-        """Genera e mostra l'anteprima della pagina 4×19 completa."""
         excel  = self.var_excel.get().strip()
         imgdir = self.var_imgdir.get().strip()
         sheet  = self.var_sheet.get().strip()
         if not (excel and imgdir):
             return
+        
         self.btn_anteprima.config(state="disabled")
-        self.lbl_preview_info.config(text="Generazione anteprima in corso…", fg=FG_DIM)
-        self.lbl_preview_title.config(text="🔍  Anteprima pagina 4×19")
+        self.lbl_preview_info.config(text="Generazione anteprima in corso…", fg="#666")
+        
         threading.Thread(
             target=self._pagina_preview_thread,
-            args=(excel, imgdir, sheet,
-                  self.var_anom_bc.get(), self.var_anom_img.get()),
+            args=(excel, imgdir, sheet, self.var_anom_bc.get(), self.var_anom_img.get()),
             daemon=True
         ).start()
 
@@ -409,30 +337,63 @@ class App(tk.Tk):
                 max_labels=76
             )
             self.after(0, lambda img=pil_img: self._show_preview(img))
-            self.after(0, lambda: self.lbl_preview_info.config(
-                text=f"Pagina 4×19 ({pil_img.width}×{pil_img.height} px) — prima pagina",
-                fg=FG_DIM))
+            self.after(0, lambda: self.lbl_preview_info.config(text=f"Pagina 4×19 ({pil_img.width}×{pil_img.height} px)", fg="#666"))
         except Exception as e:
-            self.after(0, lambda: self.lbl_preview_info.config(
-                text=f"Errore anteprima: {e}", fg=ERROR))
+            self.after(0, lambda: self.lbl_preview_info.config(text=f"Errore anteprima: {e}", fg="#dc2626"))
         finally:
             self.after(0, lambda: self.btn_anteprima.config(state="normal"))
 
     def _show_preview(self, pil_img):
+        self._preview_pil = pil_img
+        self._scale = 1.0
+        self._offset_x = 0
+        self._offset_y = 0
+        self._draw_preview()
+
+    def _draw_preview(self):
+        if not self._preview_pil:
+            return
+            
         self.canvas_preview.update_idletasks()
         cw = max(self.canvas_preview.winfo_width(),  10)
         ch = max(self.canvas_preview.winfo_height(), 10)
-        ratio   = min(cw / pil_img.width, ch / pil_img.height)
-        nw, nh  = max(1, int(pil_img.width * ratio)), max(1, int(pil_img.height * ratio))
-        resized = pil_img.resize((nw, nh), Image.Resampling.LANCZOS)
+        
+        # Se lo zoom è 1.0, fitta perfettamente nell'area
+        base_ratio = min(cw / self._preview_pil.width, ch / self._preview_pil.height)
+        ratio = base_ratio * self._scale
+        
+        nw, nh = max(1, int(self._preview_pil.width * ratio)), max(1, int(self._preview_pil.height * ratio))
+        resized = self._preview_pil.resize((nw, nh), Image.Resampling.LANCZOS)
         self._preview_tk = ImageTk.PhotoImage(resized)
         self.canvas_preview.delete("all")
-        self.canvas_preview.create_image(cw // 2, ch // 2, anchor="center",
-                                         image=self._preview_tk)
-        self.lbl_preview_info.config(
-            text=f"Anteprima: {pil_img.width}×{pil_img.height} px")
+        
+        center_x = (cw // 2) + self._offset_x
+        center_y = (ch // 2) + self._offset_y
+        self.canvas_preview.create_image(center_x, center_y, anchor="center", image=self._preview_tk)
 
-    # ── Generazione ───────────────────────────────────────────────────────────
+    def _on_zoom(self, event):
+        if not self._preview_pil: return
+        # Windows/Mac support (event.delta), Linux (event.num)
+        if event.num == 4 or getattr(event, 'delta', 0) > 0:
+            self._scale *= 1.2
+        elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+            self._scale /= 1.2
+        self._draw_preview()
+
+    def _on_pan_start(self, event):
+        self.canvas_preview.focus_set()
+        self._pan_start_x = event.x
+        self._pan_start_y = event.y
+
+    def _on_pan_move(self, event):
+        if not self._preview_pil: return
+        dx = event.x - self._pan_start_x
+        dy = event.y - self._pan_start_y
+        self._offset_x += dx
+        self._offset_y += dy
+        self._pan_start_x = event.x
+        self._pan_start_y = event.y
+        self._draw_preview()
 
     def _avvia(self):
         excel  = self.var_excel.get().strip()
@@ -443,29 +404,29 @@ class App(tk.Tk):
             messagebox.showerror("File non trovato", f"Il file Excel non esiste:\n{excel}")
             return
         if not imgdir or not os.path.isdir(imgdir):
-            messagebox.showerror("Cartella non trovata",
-                                 f"La cartella immagini non esiste:\n{imgdir}")
+            messagebox.showerror("Cartella non trovata", f"La cartella immagini non esiste:\n{imgdir}")
             return
 
-        # Reset UI — solo Avvia disabilitato, tutto il resto rimane interattivo
         self.txt_log.config(state="normal")
         self.txt_log.delete("1.0", "end")
         self.txt_log.config(state="disabled")
         self.progress_var.set(0)
         self._last_progress_t = 0.0
+        
+        out_pdf = self.var_pdf_out.get().strip() or None
+        
         self.btn_avvia.config(state="disabled")
         self.btn_apri.config(state="disabled")
-        self._set_status("Avvio elaborazione…", FG)
+        self._set_status("Avvio elaborazione…", "#000")
         self._pdf_path = None
 
         threading.Thread(
             target=self._run_thread,
-            args=(excel, imgdir, sheet,
-                  self.var_anom_bc.get(), self.var_anom_img.get()),
+            args=(excel, imgdir, sheet, self.var_anom_bc.get(), self.var_anom_img.get(), out_pdf),
             daemon=True
         ).start()
 
-    def _run_thread(self, excel, imgdir, sheet, anom_bc, anom_img):
+    def _run_thread(self, excel, imgdir, sheet, anom_bc, anom_img, out_pdf):
         try:
             result = run(
                 excel_path=excel,
@@ -473,24 +434,23 @@ class App(tk.Tk):
                 immagini_dir=imgdir,
                 anomalia_barcode=anom_bc,
                 anomalia_immagine=anom_img,
+                output_pdf_path=out_pdf,
                 log_cb=self._log,
                 progress_cb=self._set_progress,
             )
             if result:
                 self._pdf_path = result
                 self._log(f"\n✔ PDF generato: {result}", "ok")
-                self._set_status(f"✔ Completato! → {result}", SUCCESS)
+                self._set_status(f"Completato con successo!", "#16a34a")
                 self.after(0, lambda: self.btn_apri.config(state="normal"))
             else:
                 self._log("Elaborazione terminata senza PDF.", "warn")
-                self._set_status("Nessun PDF generato.", WARNING)
+                self._set_status("Nessun PDF generato.", "#d97706")
         except Exception as e:
             self._log(f"ERRORE CRITICO: {e}", "err")
-            self._set_status(f"Errore: {e}", ERROR)
+            self._set_status(f"Errore: {e}", "#dc2626")
         finally:
-            # Riabilita Avvia
             self.after(0, lambda: self.btn_avvia.config(state="normal"))
-            # Porta la barra al 100%, poi dopo 1,5 s svuotala
             self.after(0, lambda: self.progress_var.set(100))
             self.after(1500, lambda: self.progress_var.set(0))
 

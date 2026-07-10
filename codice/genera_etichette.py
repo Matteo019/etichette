@@ -261,6 +261,7 @@ def run(excel_path,
         immagini_dir=None,
         anomalia_barcode="blank",
         anomalia_immagine="blank",
+        output_pdf_path=None,
         log_cb=None,
         progress_cb=None):
     """
@@ -272,6 +273,7 @@ def run(excel_path,
         immagini_dir:      cartella delle immagini (default: ./Immagini_articoli_Sigla)
         anomalia_barcode:  "blank" | "skip"
         anomalia_immagine: "blank" | "skip"
+        output_pdf_path:   percorso per il salvataggio del PDF
         log_cb:            callback(str, tag=None) per log UI
         progress_cb:       callback(current, total) per progress bar
 
@@ -289,7 +291,11 @@ def run(excel_path,
 
     output_dir = os.path.join(SCRIPT_DIR, "output_etichette")
     temp_dir   = os.path.join(SCRIPT_DIR, "temp_barcodes")
-    pdf_path   = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "etichette_finali.pdf"))
+    
+    if output_pdf_path:
+        pdf_path = output_pdf_path
+    else:
+        pdf_path = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "etichette_finali.pdf"))
 
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
