@@ -235,8 +235,16 @@ class App(tk.Tk):
         if messages:
             self.txt_log.config(state="normal")
             for msg, tag in messages:
-                self.txt_log.insert("end", msg + "\n", tag or "")
-            self.txt_log.see("end")
+                try:
+                    # Garantiamo che msg sia una stringa
+                    msg_str = str(msg)
+                    if tag:
+                        self.txt_log.insert(tk.END, msg_str + "\n", tag)
+                    else:
+                        self.txt_log.insert(tk.END, msg_str + "\n")
+                except Exception:
+                    pass
+            self.txt_log.see(tk.END)
             self.txt_log.config(state="disabled")
 
         self._log_flush_id = self.after(LOG_FLUSH_INTERVAL_MS, self._flush_log_buffer)
