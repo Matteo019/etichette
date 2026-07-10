@@ -2,19 +2,32 @@
 
 Questo progetto permette di generare automaticamente etichette per il magazzino in formato PDF (con codici a barre EAN-13) a partire da un file Excel (.xlsx).
 
-## Struttura del Progetto
-- `codice/`: Contiene lo script principale (`genera_etichette.py`) e il file delle dipendenze (`requirements.txt`).
-- `codice/Immagini_articoli_Sigla/`: Cartella in cui inserire le immagini dei prodotti scaricate e richiamate dall'Excel.
+## Utilizzo Rapido (Standalone)
 
-## Installazione
+La via più semplice per usare il programma è tramite l'eseguibile portatile (per Windows):
+1. Vai nella cartella `dist/` e avvia `GeneratoreEtichette.exe`.
+2. Si aprirà l'interfaccia grafica.
+3. Seleziona il tuo file Excel e la cartella contenente le immagini dei prodotti.
+4. (Opzionale) Premi **Avvia Anteprima** per visualizzare come verrà formattata la pagina (con funzioni di zoom e pan del mouse).
+5. Premi **Avvia Generazione** per creare il PDF finale. 
 
-> **Prerequisito**: Python non è nel PATH di sistema. Usa il percorso completo o aggiungi Python al PATH.
+Tutto l'avanzamento verrà mostrato nella barra di progresso e nella console di Log visiva.
 
-1. Dalla cartella principale (`etichette/`), crea l'ambiente virtuale con il percorso completo di Python:
+## Struttura del Progetto per Sviluppatori
+- `codice/app.py`: Script che avvia l'interfaccia grafica (GUI) in stile nativo Windows tramite Tkinter.
+- `codice/genera_etichette.py`: Logica core per la costruzione dei barcode e l'impaginazione in PDF.
+- `GeneratoreEtichette.spec`: File di configurazione per `PyInstaller`.
+- `dist/`: Contiene l'eseguibile finale pacchettizzato.
+
+## Sviluppo e Installazione manuale
+
+> **Prerequisito**: Python installato sul sistema.
+
+1. Crea l'ambiente virtuale:
    ```powershell
-   C:\Users\_matt32\AppData\Local\Python\bin\python.exe -m venv .venv
+   python -m venv .venv
    ```
-2. Attiva l'ambiente virtuale (PowerShell su Windows):
+2. Attiva l'ambiente virtuale:
    ```powershell
    & ".\.venv\Scripts\Activate.ps1"
    ```
@@ -22,14 +35,13 @@ Questo progetto permette di generare automaticamente etichette per il magazzino 
    ```powershell
    python -m pip install pillow python-barcode img2pdf pandas openpyxl
    ```
-
-## Utilizzo
-
-1. Inserisci il tuo file con i dati (`.xlsx`) nella directory principale (quella in cui si trova questo README).
-2. Assicurati che le eventuali immagini dei prodotti siano all'interno di `codice/Immagini_articoli_Sigla/`.
-3. Lancia lo script (ricordati di avere l'ambiente virtuale attivo):
+4. Lancia l'interfaccia grafica:
    ```bash
-   cd codice
-   python genera_etichette.py
+   python codice/app.py
    ```
-4. A processo terminato, il file `etichette_finali.pdf` pronto per la stampa verrà salvato automaticamente nella directory principale. (I file temporanei PNG generati durante il processo verranno puliti in automatico).
+
+## Compilazione (Pacchettizzazione in .exe)
+Per generare l'eseguibile indipendente:
+```powershell
+pyinstaller --noconsole --onefile --name "GeneratoreEtichette" --clean --hidden-import openpyxl --hidden-import barcode.ean --hidden-import barcode.writer codice/app.py
+```
