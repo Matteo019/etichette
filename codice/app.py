@@ -14,7 +14,7 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from genera_etichette import run, genera_label_anteprima
+from genera_etichette import run, genera_label_anteprima, genera_pagina_preview
 
 import pandas as pd
 
@@ -141,9 +141,15 @@ class App(tk.Tk):
 
         # ── Bottoni ──────────────────────────────────────────────────────────
         btn_row = tk.Frame(parent, bg=BG); btn_row.pack(fill="x", pady=14)
+
+        self.btn_anteprima = self._btn(btn_row, "🔍  Avvia anteprima",
+                                       self._avvia_anteprima, width=18, secondary=True)
+        self.btn_anteprima.pack(side="left")
+        self.btn_anteprima.config(state="disabled")
+
         self.btn_avvia = self._btn(btn_row, "▶  Avvia generazione",
-                                   self._avvia, big=True, width=22)
-        self.btn_avvia.pack(side="left")
+                                   self._avvia, big=True, width=20)
+        self.btn_avvia.pack(side="left", padx=(10,0))
         self.btn_avvia.config(state="disabled")
 
         self.btn_apri = self._btn(btn_row, "📄  Apri PDF", self._apri_pdf,
@@ -216,9 +222,12 @@ class App(tk.Tk):
             self._adv_frame.pack(fill="x", pady=(4, 0))
 
     def _build_right(self, parent):
-        tk.Label(parent, text="🔍  Anteprima etichetta",
-                 font=FONT_BOLD, bg=BG2, fg=ACCENT_H).pack(anchor="w")
-        tk.Label(parent, text="Prima riga valida del file Excel",
+        self.lbl_preview_title = tk.Label(
+            parent, text="🔍  Anteprima",
+            font=FONT_BOLD, bg=BG2, fg=ACCENT_H)
+        self.lbl_preview_title.pack(anchor="w")
+        tk.Label(parent,
+                 text="Clicca 'Avvia anteprima' per vedere la pagina 4×19",
                  font=FONT_SUB, bg=BG2, fg=FG_DIM).pack(anchor="w", pady=(0,10))
 
         self.canvas_preview = tk.Canvas(parent, bg=BG3, highlightthickness=1,
@@ -226,15 +235,10 @@ class App(tk.Tk):
         self.canvas_preview.pack(fill="both", expand=True)
         self.lbl_preview_info = tk.Label(
             parent,
-            text="Seleziona il file Excel per generare l'anteprima.",
+            text="Premi '🔍 Avvia anteprima' per visualizzare il layout di stampa.",
             font=FONT_MAIN, bg=BG2, fg=FG_DIM,
             anchor="center", wraplength=300)
         self.lbl_preview_info.pack(pady=8)
-
-        self.btn_refresh = self._btn(parent, "🔄  Aggiorna anteprima",
-                                     self._refresh_preview, secondary=True)
-        self.btn_refresh.pack(pady=(0,4))
-        self.btn_refresh.config(state="disabled")
 
     # ─────────────────────────────────────────────────────────────────────────
     # HELPERS UI
@@ -366,43 +370,53 @@ class App(tk.Tk):
         img_ok   = bool(self.var_imgdir.get().strip()) and os.path.isdir(self.var_imgdir.get().strip())
         ready    = excel_ok and img_ok
 
-        self.btn_avvia.config(state="normal" if ready else "disabled")
-        self.btn_refresh.config(state="normal" if ready else "disabled")
+        state = "normal" if ready else "disabled"
+        self.btn_avvia.config(state=state)
+        self.btn_anteprima.config(state=state)
 
         if ready:
-            self._set_status("Parametri pronti. Premi ▶ Avvia per generare il PDF.", FG)
-            self._refresh_preview()
+            self._set_status("Parametri pronti. Premi 🔍 Anteprima o ▶ Avvia.", FG)
         else:
             missing = []
             if not excel_ok:  missing.append("file Excel")
             if not img_ok:    missing.append("cartella immagini")
             self._set_status(f"Seleziona: {', '.join(missing)} per abilitare l'avvio.", FG_DIM)
 
-    def _refresh_preview(self):
+    def _avvia_anteprima(self):
+        """Genera e mostra l'anteprima della pagina 4×19 completa."""
         excel  = self.var_excel.get().strip()
         imgdir = self.var_imgdir.get().strip()
         sheet  = self.var_sheet.get().strip()
         if not (excel and imgdir):
             return
-        threading.Thread(target=self._preview_thread,
-                         args=(excel, imgdir, sheet), daemon=True).start()
+        self.btn_anteprima.config(state="disabled")
+        self.lbl_preview_info.config(text="Generazione anteprima in corso…", fg=FG_DIM)
+        self.lbl_preview_title.config(text="🔍  Anteprima pagina 4×19")
+        threading.Thread(
+            target=self._pagina_preview_thread,
+            args=(excel, imgdir, sheet,
+                  self.var_anom_bc.get(), self.var_anom_img.get()),
+            daemon=True
+        ).start()
 
-    def _preview_thread(self, excel, imgdir, sheet):
+    def _pagina_preview_thread(self, excel, imgdir, sheet, anom_bc, anom_img):
         try:
             df      = pd.read_excel(excel, sheet_name=sheet)
-            pil_img = None
-            for _, row in df.iterrows():
-                pil_img = genera_label_anteprima(row, imgdir)
-                if pil_img:
-                    break
-            if pil_img:
-                self.after(0, lambda img=pil_img: self._show_preview(img))
-            else:
-                self.after(0, lambda: self.lbl_preview_info.config(
-                    text="Nessuna riga valida trovata per l'anteprima."))
+            pil_img = genera_pagina_preview(
+                df, imgdir,
+                anomalia_barcode=anom_bc,
+                anomalia_immagine=anom_img,
+                max_labels=76
+            )
+            self.after(0, lambda img=pil_img: self._show_preview(img))
+            self.after(0, lambda: self.lbl_preview_info.config(
+                text=f"Pagina 4×19 ({pil_img.width}×{pil_img.height} px) — prima pagina",
+                fg=FG_DIM))
         except Exception as e:
             self.after(0, lambda: self.lbl_preview_info.config(
-                text=f"Errore anteprima: {e}"))
+                text=f"Errore anteprima: {e}", fg=ERROR))
+        finally:
+            self.after(0, lambda: self.btn_anteprima.config(state="normal"))
 
     def _show_preview(self, pil_img):
         self.canvas_preview.update_idletasks()

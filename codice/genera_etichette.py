@@ -163,10 +163,93 @@ def genera_label(row, immagini_dir,
 
 
 def genera_label_anteprima(row, immagini_dir):
-    """Wrapper per l'anteprima GUI: usa sempre 'blank' per non saltare nulla."""
+    """Wrapper per l'anteprima singola etichetta nella GUI."""
     return genera_label(row, immagini_dir,
                         anomalia_barcode="blank",
                         anomalia_immagine="blank")
+
+
+def genera_pagina_preview(df, immagini_dir,
+                          anomalia_barcode="blank",
+                          anomalia_immagine="blank",
+                          max_labels=76):
+    """
+    Genera un'anteprima della pagina griglia 4×19 come PIL Image (niente file su disco).
+
+    Args:
+        df:                DataFrame pandas con le righe da usare
+        immagini_dir:      cartella delle immagini
+        anomalia_barcode:  "blank" | "skip"
+        anomalia_immagine: "blank" | "skip"
+        max_labels:        numero max di etichette da generare (default 76 = 1 pagina)
+
+    Returns:
+        PIL.Image della pagina assemblata
+    """
+    cols = 19
+    rows = 4
+    gap  = 0
+
+    w_rot    = H        # etichetta ruotata di 90°
+    h_rot    = W
+    margin_x = 70
+    margin_y = 30
+    grid_w   = cols * w_rot
+    grid_h   = rows * h_rot
+    page_w   = grid_w + 2 * margin_x
+    page_h   = grid_h + 2 * margin_y
+
+    page_img  = Image.new("RGB", (page_w, page_h), "white")
+    draw_page = ImageDraw.Draw(page_img)
+
+    labels_placed = 0
+    for _, row in df.iterrows():
+        if labels_placed >= max_labels:
+            break
+        pil = genera_label(row, immagini_dir,
+                           anomalia_barcode=anomalia_barcode,
+                           anomalia_immagine=anomalia_immagine)
+        if pil is None:
+            continue
+        lbl_rot = pil.transpose(Image.Transpose.ROTATE_90)
+        col     = labels_placed % cols
+        row_idx = labels_placed // cols
+        x = margin_x + col     * (w_rot + gap)
+        y = margin_y + row_idx * (h_rot + gap)
+        page_img.paste(lbl_rot, (x, y))
+        labels_placed += 1
+
+    # Cerchi di riferimento
+    mark_d   = 40
+    cx_left  = margin_x / 2
+    cx_right = page_w - margin_x / 2
+    for mx, my in [
+        (cx_left,  page_h * 0.2017),
+        (cx_left,  page_h * 0.9717),
+        (cx_right, page_h * 0.0901),
+        (cx_right, page_h * 0.6361),
+    ]:
+        draw_page.ellipse(
+            [mx - mark_d/2, my - mark_d/2, mx + mark_d/2, my + mark_d/2],
+            outline="black", width=3
+        )
+
+    # Griglia minima
+    for c in range(cols + 1):
+        lx = margin_x + c * w_rot
+        draw_page.line([(lx, margin_y), (lx, margin_y + grid_h)], fill="black", width=1)
+    for r in range(rows + 1):
+        ly = margin_y + r * h_rot
+        draw_page.line([(margin_x, ly), (margin_x + grid_w, ly)], fill="black", width=1)
+
+    # Squadretta a "L"
+    bk = 3
+    vx = page_w * 0.99764
+    vy = page_h * 0.99356
+    draw_page.line([(vx - page_w * 0.005805, vy), (vx, vy)], fill="black", width=bk)
+    draw_page.line([(vx, vy - page_h * 0.009442), (vx, vy)],  fill="black", width=bk)
+
+    return page_img
 
 
 # ─────────────────────────────────────────────────────────────────────────────
