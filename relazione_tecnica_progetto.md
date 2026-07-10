@@ -1,4 +1,4 @@
-﻿# Relazione Tecnica: Progetto Automazione Etichette Aziendali
+# Relazione Tecnica: Progetto Automazione Etichette Aziendali
 
 ## Obiettivo del Progetto
 Il progetto ha come scopo l'automazione della generazione di etichette da magazzino, partendo da un'esportazione dati in formato Excel e producendo un file PDF ottimizzato per la stampa massiva.
@@ -136,3 +136,19 @@ Il processo automatizzato si compone delle seguenti fasi sequenziali:
 - **Elaborazione Immagini**: `Pillow`
 - **Generazione PDF**: `img2pdf`
 
+## 6. Interfaccia Grafica (GUI) e Pacchettizzazione
+
+Per facilitare l'utilizzo del software agli utenti non tecnici, il progetto è stato arricchito con un'interfaccia grafica (GUI) e compilato come eseguibile standalone.
+
+### 6.1 Sviluppo GUI (Tkinter)
+* **Libreria**: `tkinter`.
+* **Architettura**: L'interfaccia, ospitata in `codice/app.py`, implementa un layout diviso in sezioni con `LabelFrame`. Per evitare che la finestra si blocchi (freeze) durante l'elaborazione dei dati pesanti (lettura Excel e rendering immagini), il ciclo di generazione e le anteprime sono stati delegati a dei **thread separati** tramite il modulo `threading`.
+
+### 6.2 Cattura Log e Flusso (Thread-Safe)
+* **Criticità**: Impossibilità di aggiornare l'interfaccia Tkinter in modo asincrono dai thread secondari, e necessità di mostrare i print testuali di sistema all'utente.
+* **Soluzione**: Implementazione del pattern Produttore-Consumatore tramite `queue.Queue`. I flussi standard (`sys.stdout` e `sys.stderr`) sono stati reindirizzati su un oggetto `StdoutRedirector`. Il thread principale della UI interroga costantemente la coda per svuotare il buffer e aggiornare in sicurezza la TextBox del Log, garantendo stabilità ed evitando crash di concorrenza.
+
+### 6.3 Pacchettizzazione in Eseguibile (Standalone)
+* **Libreria**: `PyInstaller`.
+* **Gestione Moduli Dinamici**: Durante la fase di pacchettizzazione sono emerse criticità con l'importazione dinamica di moduli usati da `python-barcode` (come `barcode.ean` e `barcode.writer`) e da `pandas` (`openpyxl`). PyInstaller è stato istruito esplicitamente ad includere questi `hidden-import`.
+* **Deploy**: Il tool finale viene distribuito come file `.exe` singolo (modalità `--onefile`) e invisibile al terminale (`--noconsole`), permettendo un'esecuzione fluida e portatile su qualsiasi macchina Windows senza necessità di installare Python o le dipendenze in locale.
