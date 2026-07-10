@@ -84,14 +84,20 @@ def main():
         if barcode_val.endswith('.0'):
             barcode_val = barcode_val[:-2]
             
-        sigla = str(row.get('CODICE SIGLA', '')).strip()
-        modello = str(row.get('MODELLO', '')).strip().replace(' ', '   ')
-        materiale = str(row.get('MATERIALE', '')).strip()
-        dimensioni = str(row.get('DIMENSIONI', '')).strip()
-        immagine_rete = str(row.get('IMMAGINE', '')).strip()
+        def get_str_val(col_name):
+            val = row.get(col_name, '')
+            if pd.isna(val) or str(val).strip().lower() == 'nan':
+                return ''
+            return str(val).strip()
+
+        sigla = get_str_val('CODICE SIGLA')
+        modello = get_str_val('MODELLO').replace(' ', '   ')
+        materiale = get_str_val('MATERIALE')
+        dimensioni = get_str_val('DIMENSIONI')
+        immagine_rete = get_str_val('IMMAGINE')
         
         path_img_locale = None
-        if immagine_rete and immagine_rete.lower() != 'nan':
+        if immagine_rete:
             nome_img = immagine_rete.replace("\\", "/").split("/")[-1]
             temp_path = os.path.join(immagini_locali_dir, nome_img)
             if os.path.exists(temp_path):
@@ -99,9 +105,9 @@ def main():
             else:
                 print(f"ATTENZIONE (Riga {excel_row}): Immagine {nome_img} non trovata.")
         
-        if len(barcode_val) != 13 or not barcode_val.isdigit():
-            print(f"ATTENZIONE (Riga {excel_row}): Barcode invalido ({barcode_val})")
-            continue
+        barcode_invalido = len(barcode_val) != 13 or not barcode_val.isdigit()
+        if barcode_invalido:
+            print(f"ATTENZIONE (Riga {excel_row}): Barcode invalido ({barcode_val}) - zona barcode lasciata bianca")
             
         img = Image.new("RGB", (w, h), "white")
         draw = ImageDraw.Draw(img)
@@ -128,38 +134,41 @@ def main():
                 img.paste(final_prod_img, (paste_x, paste_y))
             except Exception as e:
                 print(f"Errore caricamento immagine {path_img_locale}: {e}")
-                img.paste(icon, (0, 0))
+                # Immagine non caricabile: lato sx resta bianco
         else:
-            img.paste(icon, (0, 0))
+            # Immagine non trovata: lato sx resta bianco
+            pass
 
-        draw.rectangle([0, 0, w-1, h-1], outline="black", width=2)
+        # Etichette senza bordo: riga commentata
+        # draw.rectangle([0, 0, w-1, h-1], outline="black", width=2)
         
         EAN = barcode.get_barcode_class('ean13')
-        try:
-            writer_options = {
-                'dpi': 300,
-                'module_width': 0.25,
-                'module_height': 6.0,
-                'font_size': 7,
-                'text_distance': 4.5,
-                'guard_height_factor': 1.2,
-                'quiet_zone': 2.0,
-                'font_path': 'arial.ttf'
-            }
-            temp_bc = os.path.join(temp_dir, f"temp_bc_{excel_row}")
-            ean = EAN(barcode_val, writer=ImageWriter(), guardbar=True)
-            testo_barcode = f"{ean.ean[0]} {ean.ean[1:7]} {ean.ean[7:]}"
-            ean.save(temp_bc, options=writer_options, text=testo_barcode)
-            
-            bc_img = Image.open(f"{temp_bc}.png")
-            bc_w, bc_h = bc_img.size
-            img.paste(bc_img, (center_x - bc_w // 2, int(h * 0.056)))
-            bc_img.close()
-            os.remove(f"{temp_bc}.png")
-            
-        except Exception as e:
-            print(f"Riga {excel_row}: Errore barcode -> {e}")
-            continue
+        if not barcode_invalido:
+            try:
+                writer_options = {
+                    'dpi': 300,
+                    'module_width': 0.25,
+                    'module_height': 6.0,
+                    'font_size': 7,
+                    'text_distance': 4.5,
+                    'guard_height_factor': 1.2,
+                    'quiet_zone': 2.0,
+                    'font_path': 'arial.ttf'
+                }
+                temp_bc = os.path.join(temp_dir, f"temp_bc_{excel_row}")
+                ean = EAN(barcode_val, writer=ImageWriter(), guardbar=True)
+                testo_barcode = f"{ean.ean[0]} {ean.ean[1:7]} {ean.ean[7:]}"
+                ean.save(temp_bc, options=writer_options, text=testo_barcode)
+                
+                bc_img = Image.open(f"{temp_bc}.png")
+                bc_w, bc_h = bc_img.size
+                img.paste(bc_img, (center_x - bc_w // 2, int(h * 0.056)))
+                bc_img.close()
+                os.remove(f"{temp_bc}.png")
+                
+            except Exception as e:
+                print(f"Riga {excel_row}: Errore barcode -> {e} - zona barcode lasciata bianca")
+        # Se barcode_invalido=True oppure errore: zona barcode resta bianca
 
         def draw_squashed_text_center(text, target_h_pct, y_pct):
             font_size = int(h * target_h_pct)
@@ -205,20 +214,21 @@ def main():
         print("Creazione delle pagine a griglia in corso...")
         cols = 19
         rows = 4
-        gap = 10
+        gap = 0  # Nessuno spazio vuoto tra le etichette
         labels_per_page = cols * rows
         
         # Etichette "in piedi" (ruotate di 90 gradi)
         w_rot = h
         h_rot = w
         
-        grid_w = cols * w_rot + (cols - 1) * gap
-        grid_h = rows * h_rot + (rows - 1) * gap
-        
-        # Margini esterni
-        margin_x = 70
-        margin_y = 30
-        
+        # Margini esterni (spazio per i riferimenti di taglio)
+        margin_x = 70  # +10 → pagina leggermente più larga
+        margin_y = 30  # -10 → pagina leggermente più bassa
+
+        # FIX: grid_w/grid_h (non erano definiti → NameError)
+        grid_w = cols * w_rot
+        grid_h = rows * h_rot
+
         page_w = grid_w + 2 * margin_x
         page_h = grid_h + 2 * margin_y
         
@@ -245,9 +255,62 @@ def main():
                 except Exception as e:
                     print(f"Errore incollaggio {img_path}: {e}")
             
-            # Disegno la linea nera esterna (tutto attorno alla pagina)
-            draw_page.rectangle([0, 0, page_w-1, page_h-1], outline="black", width=2)
+            # Disegno la linea nera esterna della pagina rimossa
+            # draw_page.rectangle([0, 0, page_w-1, page_h-1], outline="black", width=2)
             
+            # Riferimenti per la fresa per il taglio (posizioni ESATTE misurate dallo schema)
+            mark_d = 40  # diametro del cerchio
+
+            # Orizzontale: centrato nel margine
+            cx_left  = margin_x / 2
+            cx_right = page_w - margin_x / 2
+
+            # Verticale: percentuali misurate esattamente sull'immagine schema
+            y_frac_top_left    = 0.2017   # cerchio sx, in alto (dentro la 1a riga)
+            y_frac_bottom_left = 0.9717   # cerchio sx, in basso (vicino al bordo inf.)
+            y_frac_top_right   = 0.0901   # cerchio dx, in alto (vicino al bordo sup.)
+            y_frac_mid_right   = 0.6361   # cerchio dx, centrale (dentro la 3a riga)
+
+            marks = [
+                (cx_left,  page_h * y_frac_top_left),
+                (cx_left,  page_h * y_frac_bottom_left),
+                (cx_right, page_h * y_frac_top_right),
+                (cx_right, page_h * y_frac_mid_right),
+            ]
+
+            for mx, my in marks:
+                draw_page.ellipse(
+                    [mx - mark_d/2, my - mark_d/2, mx + mark_d/2, my + mark_d/2],
+                    outline="black", width=3
+                )
+            
+            # Disegno di una linea minima (griglia) per delimitare le etichette
+            for c in range(cols + 1):
+                lx = margin_x + c * w_rot
+                draw_page.line([(lx, margin_y), (lx, margin_y + grid_h)], fill="black", width=1)
+                
+            for r in range(rows + 1):
+                ly = margin_y + r * h_rot
+                draw_page.line([(margin_x, ly), (margin_x + grid_w, ly)], fill="black", width=1)
+            
+            # Squadretta a "L" in basso a destra (posizione ESATTA misurata dallo schema)
+            bracket_stroke = 3
+
+            vertex_x = page_w * 0.99764
+            vertex_y = page_h * 0.99356
+
+            horiz_len = page_w * 0.005805  # tratto orizzontale verso sinistra
+            vert_len  = page_h * 0.009442  # tratto verticale verso l'alto
+
+            draw_page.line(
+                [(vertex_x - horiz_len, vertex_y), (vertex_x, vertex_y)],
+                fill="black", width=bracket_stroke
+            )
+            draw_page.line(
+                [(vertex_x, vertex_y - vert_len), (vertex_x, vertex_y)],
+                fill="black", width=bracket_stroke
+            )
+
             page_path = os.path.join(output_dir, f"page_grid_{i//labels_per_page + 1}.png")
             page_img.save(page_path)
             pages.append(page_path)

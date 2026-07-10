@@ -8,18 +8,19 @@ Questo progetto permette di generare automaticamente etichette per il magazzino 
 
 ## Installazione
 
-1. Entra nella cartella del codice e crea l'ambiente virtuale:
-   ```bash
-   cd codice
-   python -m venv env
+> **Prerequisito**: Python non è nel PATH di sistema. Usa il percorso completo o aggiungi Python al PATH.
+
+1. Dalla cartella principale (`etichette/`), crea l'ambiente virtuale con il percorso completo di Python:
+   ```powershell
+   C:\Users\_matt32\AppData\Local\Python\bin\python.exe -m venv .venv
    ```
-2. Attiva l'ambiente virtuale (su Windows):
-   ```bash
-   .\env\Scripts\activate
+2. Attiva l'ambiente virtuale (PowerShell su Windows):
+   ```powershell
+   & ".\.venv\Scripts\Activate.ps1"
    ```
 3. Installa le librerie necessarie:
-   ```bash
-   pip install -r requirements.txt
+   ```powershell
+   python -m pip install pillow python-barcode img2pdf pandas openpyxl
    ```
 
 ## Utilizzo
