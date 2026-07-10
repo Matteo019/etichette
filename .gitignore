@@ -13,6 +13,11 @@ __pycache__/
 .vscode/
 .idea/
 
+# PyInstaller
+build/
+dist/
+*.spec
+
 # File di dati e output (per evitare di tracciare dati sensibili o grandi file)
 *.xlsx
 *.pdf
