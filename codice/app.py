@@ -347,7 +347,9 @@ class App(tk.Tk):
             self.after(0, lambda img=pil_img: self._show_preview(img))
             self.after(0, lambda: self.lbl_preview_info.config(text=f"Pagina 4×19 ({pil_img.width}×{pil_img.height} px)", fg="#666"))
         except Exception as e:
-            self.after(0, lambda: self.lbl_preview_info.config(text=f"Errore anteprima: {e}", fg="#dc2626"))
+            err_msg = str(e)
+            self._log(f"Errore anteprima: {err_msg}", "err")
+            self.after(0, lambda err=err_msg: self.lbl_preview_info.config(text=f"Errore anteprima: {err}", fg="#dc2626"))
         finally:
             self.after(0, lambda: self.btn_anteprima.config(state="normal"))
 
@@ -455,8 +457,9 @@ class App(tk.Tk):
                 self._log("Elaborazione terminata senza PDF.", "warn")
                 self._set_status("Nessun PDF generato.", "#d97706")
         except Exception as e:
-            self._log(f"ERRORE CRITICO: {e}", "err")
-            self._set_status(f"Errore: {e}", "#dc2626")
+            err_msg = str(e)
+            self._log(f"ERRORE CRITICO: {err_msg}", "err")
+            self.after(0, lambda err=err_msg: self.var_status.set(f"Errore: {err}"))
         finally:
             self.after(0, lambda: self.btn_avvia.config(state="normal"))
             self.after(0, lambda: self.progress_var.set(100))
