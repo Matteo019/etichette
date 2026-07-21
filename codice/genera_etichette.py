@@ -16,16 +16,50 @@ import img2pdf
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Costanti layout etichetta (750×373 px)
+# Costanti layout etichetta (750×375 px → rapporto 2:1 esatto = 100×50 mm)
 # ─────────────────────────────────────────────────────────────────────────────
-W, H         = 750, 373
+W, H         = 750, 375
 CENTER_X     = int(W * 0.731)
 MAX_TXT_W    = int(W * 0.385)
 LEFT_BOX_W   = int(W * 0.48)
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-FONT_BOLD    = os.path.join(SCRIPT_DIR, "arialbd.ttf")
-FONT_REGULAR = os.path.join(SCRIPT_DIR, "arial.ttf")
+
+
+def _resolve_font(nome):
+    """Ritorna il font accanto allo script se presente, altrimenti quello di sistema
+    (Windows Fonts). Evita etichette con testo/barcode vuoti se il .ttf non è stato
+    copiato nella cartella del progetto."""
+    locale = os.path.join(SCRIPT_DIR, nome)
+    if os.path.exists(locale):
+        return locale
+    sistema = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", nome)
+    if os.path.exists(sistema):
+        return sistema
+    return locale  # lasciamo il path locale: verrà gestito dal try/except a valle
+
+
+FONT_BOLD    = _resolve_font("arialbd.ttf")
+FONT_REGULAR = _resolve_font("arial.ttf")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dimensione fisica di stampa richiesta: 10 × 5 cm (100 × 50 mm).
+# Il canvas etichetta è 750×375 px (W×H) = rapporto 2:1 esatto. A 190.5 DPI
+# (= 750 px / (100 mm / 25.4)) l'etichetta stampa esattamente 100×50 mm.
+# Le pagine PNG vengono salvate con questo DPI così che img2pdf produca un PDF
+# in scala 1:1 (senza, img2pdf assume 96 DPI di default → etichette ~2× troppo grandi).
+#
+# Margini della "camicia"/schema fresa (foglio 970×410 mm = 19×50+20 × 4×100+10):
+# 10 mm ai lati, 5 mm sopra/sotto. In px diventano 75 e 37.5, così che la pagina
+# assemblata sia 7275×3075 px = 970×410 mm esatti a 190.5 DPI.
+# ─────────────────────────────────────────────────────────────────────────────
+LABEL_W_MM  = 100.0
+LABEL_H_MM  = 50.0
+MARGIN_X_MM = 10.0
+MARGIN_Y_MM = 5.0
+DPI_STAMPA  = W / (LABEL_W_MM / 25.4)              # 190.5
+MARGIN_X_PX = MARGIN_X_MM / 25.4 * DPI_STAMPA      # 75.0
+MARGIN_Y_PX = MARGIN_Y_MM / 25.4 * DPI_STAMPA      # 37.5
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +102,8 @@ def genera_label(row, immagini_dir,
         barcode_val = barcode_val[:-2]
 
     sigla      = _safe(row.get("CODICE SIGLA", ""))
-    modello    = _safe(row.get("MODELLO", "")).replace(" ", "   ")
+    # Tracking ridotto (1 spazio anziché 3) per un codice più compatto.
+    modello    = _safe(row.get("MODELLO", "")).replace(" ", " ")
     materiale  = _safe(row.get("MATERIALE", ""))
     dimensioni = _safe(row.get("DIMENSIONI", ""))
     immagine   = _safe(row.get("IMMAGINE", ""))
@@ -131,9 +166,10 @@ def genera_label(row, immagini_dir,
             pass  # zona barcode resta bianca
 
     # Testi centrati
-    def draw_text(text, h_pct, y_pct):
+    def draw_text(text, h_pct, y_pct, max_w_pct=None, stretch=1.0):
         if not text:
             return
+        max_w = int(W * max_w_pct) if max_w_pct else MAX_TXT_W
         try:
             fnt  = ImageFont.truetype(FONT_BOLD, int(H * h_pct))
             bbox = fnt.getbbox(text)
@@ -145,9 +181,13 @@ def genera_label(row, immagini_dir,
             rb = tmp.getbbox()
             if rb:
                 tmp = tmp.crop(rb)
+            # Allarga i glifi in orizzontale (font-width) mantenendo invariata l'altezza.
+            if stretch != 1.0:
+                tmp = tmp.resize((max(1, int(tmp.width * stretch)), tmp.height),
+                                 Image.Resampling.LANCZOS)
             nw = tmp.width
-            if nw > MAX_TXT_W:
-                nw = MAX_TXT_W
+            if nw > max_w:
+                nw = max_w
                 tmp = tmp.resize((nw, tmp.height), Image.Resampling.LANCZOS)
             mask = tmp.split()[3]
             img.paste(tmp, (CENTER_X - nw // 2, int(H * y_pct)), mask)
@@ -155,9 +195,11 @@ def genera_label(row, immagini_dir,
             pass
 
     draw_text(sigla,      0.10, 0.390)
-    draw_text(modello,    0.25, 0.505)
-    draw_text(materiale,  0.12, 0.755)
-    draw_text(dimensioni, 0.11, 0.880)
+    # Codice numerico "0020 66 20": cifre più larghe (font-width) con più spazio disponibile.
+    draw_text(modello,    0.25, 0.505, max_w_pct=0.44, stretch=1.12)
+    # Riga "ALLUMINIO cm. ...": leggermente più larga per migliorare la leggibilità.
+    draw_text(materiale,  0.12, 0.755, stretch=1.06)
+    draw_text(dimensioni, 0.11, 0.880, stretch=1.06)
 
     return img
 
@@ -192,12 +234,12 @@ def genera_pagina_preview(df, immagini_dir,
 
     w_rot    = H        # etichetta ruotata di 90°
     h_rot    = W
-    margin_x = 70
-    margin_y = 30
+    margin_x = MARGIN_X_PX
+    margin_y = MARGIN_Y_PX
     grid_w   = cols * w_rot
     grid_h   = rows * h_rot
-    page_w   = grid_w + 2 * margin_x
-    page_h   = grid_h + 2 * margin_y
+    page_w   = int(grid_w + 2 * margin_x)
+    page_h   = int(grid_h + 2 * margin_y)
 
     page_img  = Image.new("RGB", (page_w, page_h), "white")
     draw_page = ImageDraw.Draw(page_img)
@@ -214,13 +256,13 @@ def genera_pagina_preview(df, immagini_dir,
         lbl_rot = pil.transpose(Image.Transpose.ROTATE_90)
         col     = labels_placed % cols
         row_idx = labels_placed // cols
-        x = margin_x + col     * (w_rot + gap)
-        y = margin_y + row_idx * (h_rot + gap)
+        x = int(margin_x + col     * (w_rot + gap))
+        y = int(margin_y + row_idx * (h_rot + gap))
         page_img.paste(lbl_rot, (x, y))
         labels_placed += 1
 
-    # Cerchi di riferimento
-    mark_d   = 40
+    # Cerchi di riferimento (Ø 6 mm come nello schema fresa)
+    mark_d   = 6.0 / 25.4 * DPI_STAMPA  # 45 px = 6 mm
     cx_left  = margin_x / 2
     cx_right = page_w - margin_x / 2
     for mx, my in [
@@ -371,12 +413,12 @@ def run(excel_path,
     w_rot = H
     h_rot = W
 
-    margin_x = 70
-    margin_y = 30
+    margin_x = MARGIN_X_PX
+    margin_y = MARGIN_Y_PX
     grid_w   = cols * w_rot
     grid_h   = rows * h_rot
-    page_w   = grid_w + 2 * margin_x
-    page_h   = grid_h + 2 * margin_y
+    page_w   = int(grid_w + 2 * margin_x)
+    page_h   = int(grid_h + 2 * margin_y)
 
     pages = []
     for i in range(0, len(generated_images), labels_per_page):
@@ -390,16 +432,16 @@ def run(excel_path,
                 lbl_rot = lbl.transpose(Image.Transpose.ROTATE_90)
                 col     = j % cols
                 row_idx = j // cols
-                x = margin_x + col     * w_rot
-                y = margin_y + row_idx * h_rot
+                x = int(margin_x + col     * w_rot)
+                y = int(margin_y + row_idx * h_rot)
                 page_img.paste(lbl_rot, (x, y))
                 lbl_rot.close()
                 lbl.close()
             except Exception as e:
                 log(f"Errore incollaggio {img_path}: {e}", "warn")
 
-        # Cerchi di riferimento
-        mark_d   = 40
+        # Cerchi di riferimento (Ø 6 mm come nello schema fresa)
+        mark_d   = 6.0 / 25.4 * DPI_STAMPA  # 45 px = 6 mm
         cx_left  = margin_x / 2
         cx_right = page_w - margin_x / 2
         for mx, my in [
@@ -433,12 +475,17 @@ def run(excel_path,
         draw_page.line([(vx, vy - vl), (vx, vy)], fill="black", width=bk)
 
         page_path = os.path.join(output_dir, f"page_grid_{i//labels_per_page + 1}.png")
-        page_img.save(page_path)
+        # DPI di stampa esplicito → etichette in scala 1:1 (10×5 cm) nel PDF finale.
+        page_img.save(page_path, dpi=(DPI_STAMPA, DPI_STAMPA))
         pages.append(page_path)
 
     log("Creazione del PDF in corso...")
     with open(pdf_path, "wb") as f:
-        f.write(img2pdf.convert(pages))
+        # Forziamo il DPI anche a livello img2pdf per non dipendere dal default (96 DPI).
+        f.write(img2pdf.convert(
+            pages,
+            layout_fun=img2pdf.get_fixed_dpi_layout_fun((DPI_STAMPA, DPI_STAMPA)),
+        ))
     log(f"PDF salvato con successo in: {pdf_path}", "ok")
 
     shutil.rmtree(temp_dir,   ignore_errors=True)
