@@ -273,16 +273,10 @@ def genera_pagina_preview(df, immagini_dir,
     ]:
         draw_page.ellipse(
             [mx - mark_d/2, my - mark_d/2, mx + mark_d/2, my + mark_d/2],
-            outline="black", width=3
+            fill="black", outline="black", width=3
         )
 
-    # Griglia minima
-    for c in range(cols + 1):
-        lx = margin_x + c * w_rot
-        draw_page.line([(lx, margin_y), (lx, margin_y + grid_h)], fill="black", width=1)
-    for r in range(rows + 1):
-        ly = margin_y + r * h_rot
-        draw_page.line([(margin_x, ly), (margin_x + grid_w, ly)], fill="black", width=1)
+    # Griglia minima rimossa
 
     # Squadretta a "L"
     bk = 3
@@ -452,18 +446,10 @@ def run(excel_path,
         ]:
             draw_page.ellipse(
                 [mx - mark_d/2, my - mark_d/2, mx + mark_d/2, my + mark_d/2],
-                outline="black", width=3
+                fill="black", outline="black", width=3
             )
 
-        # Griglia minima
-        for c in range(cols + 1):
-            lx = margin_x + c * w_rot
-            draw_page.line([(lx, margin_y), (lx, margin_y + grid_h)],
-                           fill="black", width=1)
-        for r in range(rows + 1):
-            ly = margin_y + r * h_rot
-            draw_page.line([(margin_x, ly), (margin_x + grid_w, ly)],
-                           fill="black", width=1)
+        # Griglia minima rimossa
 
         # Squadretta a "L" in basso a destra
         bk = 3
