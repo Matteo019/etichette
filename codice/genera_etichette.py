@@ -42,6 +42,8 @@ def _resolve_font(nome):
 FONT_BOLD    = _resolve_font("arialbd.ttf")
 FONT_REGULAR = _resolve_font("arial.ttf")
 
+ESTENSIONI_IMG = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".gif", ".ai")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dimensione fisica di stampa richiesta: 10 × 5 cm (100 × 50 mm).
 # Il canvas etichetta è 750×375 px (W×H) = rapporto 2:1 esatto. A 190.5 DPI
@@ -72,13 +74,80 @@ def _safe(val):
     return str(val).strip()
 
 
+def _barcode(row):
+    val = _safe(row.get("BARCODE", ""))
+    return val[:-2] if val.endswith(".0") else val
+
+
+def _cartelle(immagini_dir):
+    if isinstance(immagini_dir, (list, tuple)):
+        return list(immagini_dir)
+    return [immagini_dir]
+
+
+def _radice(nome):
+    """Nome file senza estensioni immagine (anche doppie, es. .jpg.jpg), maiuscolo."""
+    nome = nome.strip()
+    while os.path.splitext(nome)[1].lower() in ESTENSIONI_IMG:
+        nome = os.path.splitext(nome)[0]
+    return nome.strip().upper()
+
+
+_INDICI_IMG = {}
+
+
+def _indice(cartella):
+    if cartella not in _INDICI_IMG:
+        idx = {}
+        if os.path.isdir(cartella):
+            for f in sorted(os.listdir(cartella)):
+                if os.path.splitext(f)[1].lower() in ESTENSIONI_IMG[:-1]:
+                    idx.setdefault(_radice(f), os.path.join(cartella, f))
+        _INDICI_IMG[cartella] = idx
+    return _INDICI_IMG[cartella]
+
+
+def trova_immagine(immagine, immagini_dir):
+    """Cerca l'immagine nelle cartelle date: prima per nome esatto, poi per nome
+    senza estensione (gestisce estensioni mancanti, .ai al posto di .jpg, .jpg.jpg
+    e percorsi UNC con il separatore mancante prima del nome file)."""
+    nome = immagine.replace("\\", "/").split("/")[-1].strip()
+    if not nome:
+        return None
+    cartelle = _cartelle(immagini_dir)
+    for c in cartelle:
+        p = os.path.join(c, nome)
+        if os.path.isfile(p):
+            return p
+    radici = [_radice(nome)]
+    if radici[0].startswith("IMMAGINI_ARTICOLI_"):
+        radici.append(radici[0][len("IMMAGINI_ARTICOLI_"):])
+    for r in radici:
+        for c in cartelle:
+            p = _indice(c).get(r)
+            if p:
+                return p
+    return None
+
+
+def _quantita(row):
+    for col in ("QUANTITA", "Q.TA", "QTA", "QUANTITÀ"):
+        if col in row:
+            try:
+                q = int(float(row[col]))
+                return max(q, 1)
+            except (TypeError, ValueError):
+                return 1
+    return 1
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Genera una singola etichetta PIL Image da una riga del DataFrame
 # ─────────────────────────────────────────────────────────────────────────────
 
 def genera_label(row, immagini_dir,
                  anomalia_barcode="blank", anomalia_immagine="blank",
-                 temp_dir=None):
+                 temp_dir=None, sfondo="white"):
     """
     Genera un'etichetta PIL Image da una riga del DataFrame.
 
@@ -88,6 +157,7 @@ def genera_label(row, immagini_dir,
         anomalia_barcode:  "blank" → lascia bianco | "skip" → ritorna None
         anomalia_immagine: "blank" → lascia bianco | "skip" → ritorna None
         temp_dir:          cartella temporanea per i barcode (default: script_dir/temp_barcodes)
+        sfondo:            colore di fondo dell'etichetta (es. "white", "#FFC000")
 
     Returns:
         PIL.Image oppure None se la riga va saltata
@@ -97,9 +167,7 @@ def genera_label(row, immagini_dir,
         os.makedirs(temp_dir, exist_ok=True)
 
     # ── Valori dalla riga ────────────────────────────────────────────────────
-    barcode_val = _safe(row.get("BARCODE", ""))
-    if barcode_val.endswith(".0"):
-        barcode_val = barcode_val[:-2]
+    barcode_val = _barcode(row)
 
     sigla      = _safe(row.get("CODICE SIGLA", ""))
     # Tracking ridotto (1 spazio anziché 3) per un codice più compatto.
@@ -109,15 +177,9 @@ def genera_label(row, immagini_dir,
     immagine   = _safe(row.get("IMMAGINE", ""))
 
     # ── Immagine prodotto ────────────────────────────────────────────────────
-    path_img = None
-    if immagine:
-        nome_img = immagine.replace("\\", "/").split("/")[-1]
-        candidate = os.path.join(immagini_dir, nome_img)
-        if os.path.exists(candidate):
-            path_img = candidate
-        else:
-            if anomalia_immagine == "skip":
-                return None
+    path_img = trova_immagine(immagine, immagini_dir) if immagine else None
+    if immagine and not path_img and anomalia_immagine == "skip":
+        return None
 
     # ── Barcode ──────────────────────────────────────────────────────────────
     bc_invalido = len(barcode_val) != 13 or not barcode_val.isdigit()
@@ -125,7 +187,7 @@ def genera_label(row, immagini_dir,
         return None
 
     # ── Costruzione immagine ──────────────────────────────────────────────────
-    img  = Image.new("RGB", (W, H), "white")
+    img  = Image.new("RGB", (W, H), sfondo)
     draw = ImageDraw.Draw(img)
 
     # Immagine prodotto (metà sinistra)
@@ -136,7 +198,7 @@ def genera_label(row, immagini_dir,
             bg.paste(prod, (0, 0), prod)
             bg = bg.convert("RGB")
             tw, th = LEFT_BOX_W - 20, H - 20
-            final = ImageOps.pad(bg, (tw, th), color="white")
+            final = ImageOps.pad(bg, (tw, th), color=sfondo)
             px = (LEFT_BOX_W - tw) // 2
             py = (H - th) // 2
             img.paste(final, (px, py))
@@ -159,7 +221,9 @@ def genera_label(row, immagini_dir,
             ean.save(tmp_path, options=opts, text=testo)
             bc_img = Image.open(f"{tmp_path}.png")
             bc_w, _ = bc_img.size
-            img.paste(bc_img, (CENTER_X - bc_w // 2, int(H * 0.056)))
+            # Incollato come maschera: su fondo bianco è identico, su fondo colorato niente riquadro bianco.
+            img.paste("black", (CENTER_X - bc_w // 2, int(H * 0.056)),
+                      ImageOps.invert(bc_img.convert("L")))
             bc_img.close()
             os.remove(f"{tmp_path}.png")
         except Exception:
@@ -299,7 +363,9 @@ def run(excel_path,
         anomalia_immagine="blank",
         output_pdf_path=None,
         log_cb=None,
-        progress_cb=None):
+        progress_cb=None,
+        usa_quantita=False,
+        sfondo="white"):
     """
     Genera il PDF delle etichette.
 
@@ -312,6 +378,8 @@ def run(excel_path,
         output_pdf_path:   percorso per il salvataggio del PDF
         log_cb:            callback(str, tag=None) per log UI
         progress_cb:       callback(current, total) per progress bar
+        usa_quantita:      ripete ogni etichetta per la colonna QUANTITA / Q.TA
+        sfondo:            colore di fondo delle etichette
 
     Returns:
         str: percorso PDF, oppure None
@@ -339,57 +407,50 @@ def run(excel_path,
     os.makedirs(temp_dir,   exist_ok=True)
 
     try:
-        df = pd.read_excel(excel_path, sheet_name=sheet_name)
+        df = pd.read_excel(excel_path, sheet_name=sheet_name, dtype={"BARCODE": str})
     except Exception as e:
         log(f"Errore lettura Excel: {e}", "err")
         return None
 
+    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
+    df = df.dropna(how="all")
     total = len(df)
     log(f"Inizio elaborazione di {total} righe...")
 
     generated_images = []
 
-    for idx, row in df.iterrows():
+    for n, (idx, row) in enumerate(df.iterrows(), start=1):
         excel_row   = idx + 2
-        barcode_val = _safe(row.get("BARCODE", ""))
-        if barcode_val.endswith(".0"):
-            barcode_val = barcode_val[:-2]
+        barcode_val = _barcode(row)
 
         # Log anomalie prima della generazione
         bc_invalido = len(barcode_val) != 13 or not barcode_val.isdigit()
         if bc_invalido:
-            log(f"ATTENZIONE (Riga {excel_row}): Barcode invalido ({barcode_val})"
+            log(f"ATTENZIONE (Riga {excel_row}): Barcode invalido ({barcode_val or 'vuoto'})"
                 f" → {'saltata' if anomalia_barcode == 'skip' else 'zona bianca'}", "warn")
 
         immagine = _safe(row.get("IMMAGINE", ""))
-        if immagine:
-            nome_img  = immagine.replace("\\", "/").split("/")[-1]
-            candidate = os.path.join(immagini_dir, nome_img)
-            if not os.path.exists(candidate):
-                log(f"ATTENZIONE (Riga {excel_row}): Immagine {nome_img} non trovata"
-                    f" → {'saltata' if anomalia_immagine == 'skip' else 'lato bianco'}", "warn")
+        if immagine and not trova_immagine(immagine, immagini_dir):
+            nome_img = immagine.replace("\\", "/").split("/")[-1]
+            log(f"ATTENZIONE (Riga {excel_row}): Immagine {nome_img} non trovata"
+                f" → {'saltata' if anomalia_immagine == 'skip' else 'lato bianco'}", "warn")
 
         # Genera etichetta
         pil_img = genera_label(row, immagini_dir,
                                anomalia_barcode=anomalia_barcode,
                                anomalia_immagine=anomalia_immagine,
-                               temp_dir=temp_dir)
+                               temp_dir=temp_dir, sfondo=sfondo)
 
-        if pil_img is None:
-            # Riga saltata per policy anomalie
-            if progress_cb:
-                progress_cb(idx + 1, total)
-            continue
-
-        filename = f"etichetta_{idx+1}.png"
-        out_path = os.path.join(output_dir, filename)
-        pil_img.save(out_path)
-        generated_images.append(out_path)
+        if pil_img is not None:
+            out_path = os.path.join(output_dir, f"etichetta_{idx+1}.png")
+            pil_img.save(out_path)
+            copie = _quantita(row) if usa_quantita else 1
+            generated_images.extend([out_path] * copie)
 
         if progress_cb:
-            progress_cb(idx + 1, total)
+            progress_cb(n, total)
 
-    log(f"\nGenerate {len(generated_images)} etichette su {total} righe.")
+    log(f"\nGenerate {len(generated_images)} etichette da {total} righe.")
 
     # ── Creazione PDF ─────────────────────────────────────────────────────────
     if not generated_images:
@@ -488,9 +549,15 @@ def main():
     parser = argparse.ArgumentParser(description="Genera etichette da un file Excel.")
     parser.add_argument("excel_path", nargs="?", help="Percorso del file Excel.")
     parser.add_argument("--sheet_name",  default="Situazione Magazzino")
-    parser.add_argument("--immagini_dir", default=None)
+    parser.add_argument("--immagini_dir", nargs="+", default=None,
+                        help="una o più cartelle immagini, cercate in ordine")
     parser.add_argument("--anomalia_barcode",  default="blank", choices=["blank","skip"])
     parser.add_argument("--anomalia_immagine", default="blank", choices=["blank","skip"])
+    parser.add_argument("--sfondo", default="white",
+                        help='colore di fondo etichetta, es. "#FFC000" (arancio Excel)')
+    parser.add_argument("--quantita", action="store_true",
+                        help="ripete ogni etichetta per la colonna QUANTITA / Q.TA")
+    parser.add_argument("--output", default=None, help="percorso del PDF da creare")
     args = parser.parse_args()
 
     if args.excel_path:
@@ -508,7 +575,10 @@ def main():
         sheet_name=args.sheet_name,
         immagini_dir=args.immagini_dir,
         anomalia_barcode=args.anomalia_barcode,
-        anomalia_immagine=args.anomalia_immagine)
+        anomalia_immagine=args.anomalia_immagine,
+        output_pdf_path=args.output,
+        usa_quantita=args.quantita,
+        sfondo=args.sfondo)
 
 
 if __name__ == "__main__":
