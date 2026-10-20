@@ -26,6 +26,9 @@ static class Etichetta
     static readonly SKTypeface Grassetto = Carattere("arialbd.ttf", SKFontStyle.Bold);
     static readonly SKTypeface Normale = Carattere("arial.ttf", SKFontStyle.Normal);
 
+    /// <summary>Font Arial non trovati: si usa il font di sistema più simile (la grafica può cambiare).</summary>
+    public static List<string> FontSostituiti { get; } = [];
+
     static SKTypeface Carattere(string file, SKFontStyle stile)
     {
         var accanto = Path.Combine(AppContext.BaseDirectory, file);
@@ -33,7 +36,8 @@ static class Etichetta
         foreach (var p in new[] { accanto, sistema })
             if (File.Exists(p) && SKTypeface.FromFile(p) is { } tf)
                 return tf;
-        return SKTypeface.FromFamilyName("Arial", stile);
+        FontSostituiti.Add(file);
+        return SKTypeface.FromFamilyName("Arial", stile) ?? SKTypeface.Default;
     }
 
     /// <summary>Riquadro (in pixel etichetta) in cui finisce l'immagine, come ImageOps.pad.</summary>
@@ -79,15 +83,13 @@ static class Etichetta
     {
         if (testo == "")
             return;
-        int maxW = maxWPct is { } m ? (int)(W * m) : MaxTxtW;
         using var font = new SKFont(Grassetto, (int)(H * hPct)) { Subpixel = true };
-        using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = true };
-        font.MeasureText(testo, out var ink, paint);
+        font.MeasureText(testo, out var ink);
         if (ink.Width <= 0)
             return;
-
-        int nw = Math.Max(1, (int)(Math.Ceiling(ink.Width) * allarga));
-        nw = Math.Min(nw, maxW);
+        int maxW = maxWPct is { } m ? (int)(W * m) : MaxTxtW;
+        int nw = Math.Min(Math.Max(1, (int)(Math.Ceiling(ink.Width) * allarga)), maxW);
+        using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = true };
         c.Save();
         c.Translate(CenterX - nw / 2, (int)(H * yPct));
         c.Scale(nw / ink.Width, 1);
@@ -163,14 +165,30 @@ static class Ean13
     static readonly string[] Parita = ["AAAAAA", "AABABB", "AABBAB", "AABBBA", "ABAABB",
                                        "ABBAAB", "ABBBAA", "ABABAB", "ABABBA", "ABBABA"];
 
-    public static bool Valido(string codice)
+    /// <summary>Null se il codice è un EAN-13 valido, altrimenti il motivo.</summary>
+    public static string? Problema(string codice)
     {
-        if (codice.Length != 13 || !codice.All(char.IsAsciiDigit))
-            return false;
+        if (codice == "")
+            return "barcode vuoto";
+        if (codice.Contains('E', StringComparison.OrdinalIgnoreCase) && codice.Contains('+'))
+            return $"barcode \"{codice}\" in notazione scientifica: formattare la colonna come Testo o Numero senza decimali";
+        var estranei = codice.Where(ch => !char.IsAsciiDigit(ch)).Distinct().ToArray();
+        if (estranei.Length > 0)
+            return $"barcode \"{codice}\" contiene caratteri non numerici ({string.Join(" ", estranei.Select(ch => ch == ' ' ? "spazio" : $"'{ch}'"))})";
+        if (codice.Length != 13)
+            return $"barcode \"{codice}\" ha {codice.Length} cifre invece di 13";
+        int attesa = CifraControllo(codice);
+        if (attesa != codice[12] - '0')
+            return $"barcode \"{codice}\" ha la cifra di controllo errata: l'ultima cifra dovrebbe essere {attesa}";
+        return null;
+    }
+
+    static int CifraControllo(string codice)
+    {
         int somma = 0;
         for (int i = 0; i < 12; i++)
             somma += (codice[i] - '0') * (i % 2 == 0 ? 1 : 3);
-        return (10 - somma % 10) % 10 == codice[12] - '0';
+        return (10 - somma % 10) % 10;
     }
 
     /// <summary>95 moduli: '1' barra, '0' spazio, 'G' barra di guardia.</summary>

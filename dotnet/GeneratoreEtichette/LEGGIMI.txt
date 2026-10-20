@@ -17,34 +17,78 @@ Esempio:
 Opzioni:
   --output "<file.pdf>"  PDF da creare. Default: accanto all'Excel,
                          con nome "<nome excel> - impaginato.pdf"
-  --foglio <nome>        foglio Excel da leggere (default: il primo)
+  --foglio <nome>        foglio Excel da leggere. Default: il primo foglio
+                         che contiene le colonne richieste
   --sfondo <colore>      giallo (default), bianco oppure #RRGGBB
+
+I percorsi che contengono spazi vanno sempre racchiusi tra virgolette.
 
 
 FILE EXCEL
 
-Prima riga = intestazioni. Colonne lette (maiuscole/minuscole indifferenti):
-  BARCODE, CODICE SIGLA, MODELLO, MATERIALE, DIMENSIONI, IMMAGINE
-  QUANTITA oppure Q.TA (facoltativa): numero di copie dell'etichetta.
-Le righe completamente vuote vengono ignorate.
+Formati: .xlsx, .xlsm, .xlsb, .xls. La prima riga deve contenere le
+intestazioni (maiuscole/minuscole, accenti e "_" sono indifferenti).
+
+  Obbligatorie: BARCODE, CODICE SIGLA, MODELLO, IMMAGINE
+  Facoltative:  MATERIALE, DIMENSIONI, QUANTITA (anche "Q.TA" o "QTA")
+
+QUANTITA = numero di copie dell'etichetta. Le righe vuote sono ignorate.
+La colonna IMMAGINE puo' contenere anche il percorso di rete completo:
+conta solo il nome del file, cercato nella cartella immagini e in tutte
+le sue sottocartelle.
 
 
-CONTROLLO IMMAGINI
+CONTROLLI
 
-Prima di creare il PDF il programma verifica che OGNI riga abbia la sua
-immagine nella cartella indicata (sottocartelle comprese). La colonna
-IMMAGINE puo' contenere anche il percorso di rete completo: conta solo il
-nome del file. Se l'estensione non coincide (es. .ai, .jpg.jpg o mancante)
-viene cercato un file con lo stesso nome.
+Prima di creare il PDF il programma controlla TUTTE le righe e mostra
+l'elenco completo dei problemi, ognuno con riga e colonna Excel.
 
-Se manca anche una sola immagine il programma elenca le righe interessate
-e NON crea il PDF.
+ERRORI (bloccano: il PDF non viene creato)
+  File e parametri
+  - parametri mancanti o in piu', opzione sconosciuta o senza valore
+  - colore di sfondo non valido
+  - file Excel inesistente, vuoto (0 byte), CSV, estensione non supportata,
+    file temporaneo di Excel (~$...)
+  - file non Excel o danneggiato, protetto da password, non leggibile
+  - foglio indicato inesistente (vengono elencati i fogli presenti),
+    foglio vuoto, foglio con sole intestazioni
+  - colonne obbligatorie mancanti (indica quali e quelle trovate, e se le
+    intestazioni sono in una riga diversa dalla prima o in un altro foglio)
+  - colonne ripetute
+  - cartella immagini inesistente, non accessibile o senza immagini
+  - PDF di uscita senza estensione .pdf, cartella di destinazione
+    inesistente, PDF aperto in un altro programma o di sola lettura
+  Righe
+  - IMMAGINE vuota
+  - immagine non trovata nella cartella
+  - immagine presente solo in un formato non supportato (TIF, AI, PSD,
+    PDF, EPS, SVG, HEIC): va convertita in JPG o PNG
+  - file immagine vuoto, danneggiato o non e' davvero un'immagine
+  - BARCODE non valido: caratteri non numerici o spazi, numero di cifre
+    diverso da 13, notazione scientifica, cifra di controllo errata
+    (viene indicata quella corretta)
+  - QUANTITA non numerica, decimale, zero o negativa
+  - celle con errori di Excel (#N/D, #RIF!, #VALORE!, ...)
 
-Barcode vuoti o non validi (EAN-13) vengono segnalati e l'etichetta viene
-creata con la zona barcode vuota.
+AVVISI (il PDF viene creato, ma vanno controllati)
+  - BARCODE vuoto: etichetta con la zona barcode bianca
+  - stesso BARCODE usato per codici sigla diversi
+  - CODICE SIGLA o MODELLO vuoti
+  - QUANTITA vuota (stampata 1 copia) o molto alta (oltre 500)
+  - immagine trovata con un nome leggermente diverso (estensione
+    mancante o diversa, .jpg.jpg, ...): viene indicato il file usato
+  - immagine molto piccola (sotto 100 px): in stampa risultera' sgranata
+  - font Arial non presente in Windows
+
+Il PDF viene scritto prima in un file temporaneo e sostituito solo alla
+fine: in caso di errore non resta mai un PDF a meta'.
 
 
-CODICI DI USCITA
-  0  PDF creato
-  1  errore (parametri, file non trovato, Excel non leggibile)
-  2  immagini mancanti: PDF non creato
+CODICI DI USCITA (utili se il programma e' lanciato da script)
+  0  PDF creato (eventualmente con avvisi)
+  1  parametri non validi
+  2  file Excel non valido o non adatto
+  3  cartella immagini non valida
+  4  errori nelle righe: PDF non creato
+  5  impossibile scrivere il PDF
+  9  errore imprevisto (il messaggio contiene i dettagli tecnici)
