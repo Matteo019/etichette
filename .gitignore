@@ -18,6 +18,11 @@ build/
 dist/
 *.spec
 
+# .NET
+dotnet/**/bin/
+dotnet/**/obj/
+dotnet/**/publish/
+
 # File di dati e output (per evitare di tracciare dati sensibili o grandi file)
 *.xlsx
 *.pdf

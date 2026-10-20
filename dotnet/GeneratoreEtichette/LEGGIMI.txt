@@ -1,0 +1,50 @@
+GENERATORE ETICHETTE
+====================
+
+Crea il PDF impaginato delle etichette 10x5 cm (foglio fresa 970x410 mm,
+19x4 etichette) a partire da un file Excel e da una cartella di immagini.
+Non richiede installazioni: basta estrarre lo zip ed eseguire il programma.
+
+
+USO (dal Prompt dei comandi o da PowerShell)
+
+  GeneratoreEtichette.exe "<file.xlsx>" "<cartella immagini>" [opzioni]
+
+Esempio:
+
+  GeneratoreEtichette.exe "C:\Etichette\Elenco aziendale.xlsx" "C:\Etichette\Immagini"
+
+Opzioni:
+  --output "<file.pdf>"  PDF da creare. Default: accanto all'Excel,
+                         con nome "<nome excel> - impaginato.pdf"
+  --foglio <nome>        foglio Excel da leggere (default: il primo)
+  --sfondo <colore>      giallo (default), bianco oppure #RRGGBB
+
+
+FILE EXCEL
+
+Prima riga = intestazioni. Colonne lette (maiuscole/minuscole indifferenti):
+  BARCODE, CODICE SIGLA, MODELLO, MATERIALE, DIMENSIONI, IMMAGINE
+  QUANTITA oppure Q.TA (facoltativa): numero di copie dell'etichetta.
+Le righe completamente vuote vengono ignorate.
+
+
+CONTROLLO IMMAGINI
+
+Prima di creare il PDF il programma verifica che OGNI riga abbia la sua
+immagine nella cartella indicata (sottocartelle comprese). La colonna
+IMMAGINE puo' contenere anche il percorso di rete completo: conta solo il
+nome del file. Se l'estensione non coincide (es. .ai, .jpg.jpg o mancante)
+viene cercato un file con lo stesso nome.
+
+Se manca anche una sola immagine il programma elenca le righe interessate
+e NON crea il PDF.
+
+Barcode vuoti o non validi (EAN-13) vengono segnalati e l'etichetta viene
+creata con la zona barcode vuota.
+
+
+CODICI DI USCITA
+  0  PDF creato
+  1  errore (parametri, file non trovato, Excel non leggibile)
+  2  immagini mancanti: PDF non creato
